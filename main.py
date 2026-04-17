@@ -2,49 +2,49 @@ import sys
 import json
 import os
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QMenu
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QObject
 from PyQt6.QtGui import QAction
 from pynput import keyboard
 
-# データ保存ファイルのパス
 SAVE_FILE = "stats.json"
+
+# キー入力を監視して、信号を画面に送るための専用クラス
+class KeySignal(QObject):
+    pressed = pyqtSignal(str)
+    released = pyqtSignal(str)
 
 class KeyBoardVisualizer(QWidget):
     def __init__(self):
         super().__init__()
         self.keys_labels = {}
         self.counts = self.load_stats()
-        self.offset = QPoint()
-        self.always_on_top = True # デフォルトは最前面
+        self.always_on_top = True
+        self.signals = KeySignal()
         
+        # 画面側の処理とキー監視を繋ぐ
+        self.signals.pressed.connect(self.update_press_style)
+        self.signals.released.connect(self.update_release_style)
+
         self.initUI()
         
+        # キー監視をバックグラウンドで開始
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
 
     def initUI(self):
         self.update_window_flags()
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
-        # 初期サイズをMに設定
         self.apply_size("M")
 
     def update_window_flags(self):
-        # 最前面設定を反映させるためにフラグを更新
         flags = Qt.WindowType.FramelessWindowHint
         if self.always_on_top:
             flags |= Qt.WindowType.WindowStaysOnTopHint
-        
         self.setWindowFlags(flags)
-        self.show() # フラグ変更後は再表示が必要
+        self.show()
 
     def apply_size(self, size_label):
-        # S, M, L の具体的なサイズ定義
-        size_map = {
-            "S": (500, 220),
-            "M": (750, 320),
-            "L": (1000, 420)
-        }
+        size_map = {"S": (500, 220), "M": (750, 320), "L": (1000, 420)}
         w, h = size_map[size_label]
         self.setFixedSize(w, h)
         self.update_keys()
@@ -54,7 +54,6 @@ class KeyBoardVisualizer(QWidget):
             lbl.deleteLater()
         self.keys_labels = {}
 
-        # タブ（移動ハンドル兼、説明ラベル）
         self.tab_handle = QLabel("::: RIGHT CLICK FOR SETTINGS / DRAG TO MOVE :::", self)
         self.tab_handle.setGeometry(20, 5, self.width()-40, 25)
         self.tab_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -86,39 +85,51 @@ class KeyBoardVisualizer(QWidget):
 
         self.setStyleSheet("background-color: rgba(240, 240, 240, 235); border: 2px solid #444; border-radius: 15px;")
 
-    # --- 設定メニュー（右クリック） ---
+    # --- 画面更新用の信号受け取り ---
+    def update_press_style(self, k):
+        if k in self.keys_labels:
+            self.counts[k] = self.counts.get(k, 0) + 1
+            lbl, text = self.keys_labels[k]
+            lbl.setText(f"{text}\n{self.counts[k]}")
+            lbl.setStyleSheet("background-color: #ff4444; color: white; border: 1px solid darkred; font-weight: bold; border-radius: 5px;")
+            self.save_stats()
+
+    def update_release_style(self, k):
+        if k in self.keys_labels:
+            lbl, text = self.keys_labels[k]
+            lbl.setStyleSheet("background-color: white; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px;")
+
+    # --- キー監視（信号を送るだけにする） ---
+    def on_press(self, key):
+        self.signals.pressed.emit(self.get_key_str(key))
+
+    def on_release(self, key):
+        self.signals.released.emit(self.get_key_str(key))
+
+    # (以下、contextMenuEvent, mousePressEventなどは前回と同じ)
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.setStyleSheet("background-color: white; color: black; border: 1px solid gray;")
-
-        # サイズ変更メニュー
         size_menu = menu.addMenu("Size")
         for s in ["S", "M", "L"]:
             action = QAction(f"Size {s}", self)
             action.triggered.connect(lambda checked, sz=s: self.apply_size(sz))
             size_menu.addAction(action)
-
-        # 最前面設定
         top_action = QAction("Always on Top", self)
         top_action.setCheckable(True)
         top_action.setChecked(self.always_on_top)
         top_action.triggered.connect(self.toggle_on_top)
         menu.addAction(top_action)
-
         menu.addSeparator()
-        
-        # 終了
         exit_action = QAction("Exit App", self)
         exit_action.triggered.connect(QApplication.instance().quit)
         menu.addAction(exit_action)
-
         menu.exec(event.globalPos())
 
     def toggle_on_top(self):
         self.always_on_top = not self.always_on_top
         self.update_window_flags()
 
-    # --- 基本操作 ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.offset = event.position().toPoint()
@@ -136,21 +147,6 @@ class KeyBoardVisualizer(QWidget):
 
     def save_stats(self):
         with open(SAVE_FILE, "w") as f: json.dump(self.counts, f)
-
-    def on_press(self, key):
-        k = self.get_key_str(key)
-        if k in self.keys_labels:
-            self.counts[k] = self.counts.get(k, 0) + 1
-            lbl, text = self.keys_labels[k]
-            lbl.setText(f"{text}\n{self.counts[k]}")
-            lbl.setStyleSheet("background-color: #ff4444; color: white; border: 1px solid darkred; font-weight: bold; border-radius: 5px;")
-            self.save_stats()
-
-    def on_release(self, key):
-        k = self.get_key_str(key)
-        if k in self.keys_labels:
-            lbl, text = self.keys_labels[k]
-            lbl.setStyleSheet("background-color: white; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px;")
 
     def get_key_str(self, key):
         try: return key.char.lower()
