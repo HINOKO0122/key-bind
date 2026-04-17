@@ -1,9 +1,9 @@
 import sys
 import json
 import os
-import winreg # 自動起動設定用
+import winreg
 
-# 真っ黒画面の最大の原因である「透過」を安定させる設定
+# 真っ黒対策（念のため残しますが、不透明設定にしています）
 os.environ["QT_QUICK_BACKEND"] = "software"
 
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QMenu
@@ -26,43 +26,49 @@ class KeyBoardVisualizer(QWidget):
         self.always_on_top = True
         self.is_moving = False
         self.signals = KeySignal()
+        
+        # 信号の接続
         self.signals.pressed.connect(self.update_press_style)
         self.signals.released.connect(self.update_release_style)
 
+        # 1. まずフラグを設定（表示する前に設定するのが鉄則です）
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+        
+        # 2. UIの初期化
         self.initUI()
+        
+        # 3. リスナー開始
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
+        self.listener.setDaemon(True) # アプリ終了時に一緒に消えるように
         self.listener.start()
 
     def initUI(self):
-        self.update_window_flags()
-        # 【重要】真っ黒対策：透過を無効化し、普通の不透明ウィンドウにします
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        # 背景を白に固定（真っ黒対策）
+        self.setStyleSheet("background-color: white; border: 2px solid #444; border-radius: 10px;")
         self.apply_size("M")
-
-    def update_window_flags(self):
-        flags = Qt.WindowType.FramelessWindowHint
-        if self.always_on_top:
-            flags |= Qt.WindowType.WindowStaysOnTopHint
-        self.setWindowFlags(flags)
-        self.show()
 
     def apply_size(self, size_label):
         size_map = {"S": (500, 220), "M": (750, 320), "L": (1000, 420)}
         w, h = size_map[size_label]
         self.setFixedSize(w, h)
-        self.update_keys()
+        self.update_keys() # キーを再配置
 
     def update_keys(self):
-        for lbl in self.keys_labels.values():
+        # 古いラベルを完全に消去
+        for lbl, _ in self.keys_labels.values():
+            lbl.setParent(None)
             lbl.deleteLater()
         self.keys_labels = {}
 
+        # タブハンドル
         self.tab_height = 30
-        self.tab_handle = QLabel("::: DRAG BAR TO MOVE / RIGHT CLICK FOR SETTINGS :::", self)
-        self.tab_handle.setGeometry(10, 5, self.width()-20, self.tab_height)
-        self.tab_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tab_handle.setStyleSheet("background: #333; color: white; border-radius: 5px; font-size: 7pt;")
+        self.handle = QLabel("::: RIGHT CLICK FOR SETTINGS / DRAG TO MOVE :::", self)
+        self.handle.setGeometry(10, 5, self.width()-20, self.tab_height)
+        self.handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.handle.setStyleSheet("background: #333; color: white; border-radius: 5px; font-weight: bold;")
+        self.handle.show()
 
+        # キーボードのデータ（省略なし）
         key_map = [
             ["1", "1", 0, 1, 0], ["2", "2", 1, 1, 0], ["3", "3", 2, 1, 0], ["4", "4", 3, 1, 0], ["5", "5", 4, 1, 0], 
             ["6", "6", 5, 1, 0], ["7", "7", 6, 1, 0], ["8", "8", 7, 1, 0], ["9", "9", 8, 1, 0], ["0", "0", 9, 1, 0], ["BS", "backspace", 10, 1.5, 0],
@@ -84,79 +90,74 @@ class KeyBoardVisualizer(QWidget):
             lbl = QLabel(f"{text}\n{count}", self)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setGeometry(int(x_off * base_w) + margin, int(row * base_h) + padding_t, int(base_w * w_mul) - 4, int(base_h) - 4)
-            lbl.setStyleSheet("background-color: #eee; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px;")
+            lbl.setStyleSheet("background-color: #f0f0f0; color: black; border: 1px solid #999; border-radius: 5px;")
+            lbl.show() # 明示的に表示
             self.keys_labels[code] = (lbl, text)
 
-        self.setStyleSheet("background-color: white; border: 2px solid #444; border-radius: 10px;")
+    # --- 右クリックメニュー ---
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        
+        # サイズ変更
+        size_m = menu.addMenu("サイズ変更")
+        for s in ["S", "M", "L"]:
+            a = QAction(f"サイズ {s}", self)
+            a.triggered.connect(lambda chk, sz=s: self.apply_size(sz))
+            size_m.addAction(a)
 
-    # --- 自動起動の設定機能 ---
+        # 最前面設定
+        top_a = QAction("最前面に表示", self, checkable=True, checked=self.always_on_top)
+        top_a.triggered.connect(self.toggle_on_top)
+        menu.addAction(top_a)
+
+        # 自動起動
+        start_a = QAction("Windows起動時に開始", self, checkable=True, checked=self.is_startup_enabled())
+        start_a.triggered.connect(self.toggle_startup)
+        menu.addAction(start_a)
+
+        menu.addSeparator()
+        exit_a = QAction("終了", self)
+        exit_a.triggered.connect(QApplication.instance().quit)
+        menu.addAction(exit_a)
+        
+        menu.exec(event.globalPos())
+
+    def toggle_on_top(self):
+        self.always_on_top = not self.always_on_top
+        if self.always_on_top:
+            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        else:
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+        self.show() # フラグ変更後にこれがないと消える場合がある
+
+    # --- 自動起動 (Registry) ---
     def toggle_startup(self, checked):
-        key = winreg.HKEY_CURRENT_USER
         path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         try:
-            reg_key = winreg.OpenKey(key, path, 0, winreg.KEY_SET_VALUE)
+            reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE)
             if checked:
-                # 実行ファイルのパスを登録
-                exe_path = os.path.abspath(sys.argv[0])
-                winreg.SetValueEx(reg_key, APP_NAME, 0, winreg.REG_SZ, exe_path)
+                winreg.SetValueEx(reg_key, APP_NAME, 0, winreg.REG_SZ, os.path.abspath(sys.argv[0]))
             else:
-                # 登録を削除
                 try: winreg.DeleteValue(reg_key, APP_NAME)
-                except FileNotFoundError: pass
+                except: pass
             winreg.CloseKey(reg_key)
-        except Exception as e:
-            print(f"Registry Error: {e}")
+        except: pass
 
     def is_startup_enabled(self):
-        key = winreg.HKEY_CURRENT_USER
-        path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         try:
-            reg_key = winreg.OpenKey(key, path, 0, winreg.KEY_READ)
+            reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
             winreg.QueryValueEx(reg_key, APP_NAME)
-            winreg.CloseKey(reg_key)
             return True
         except: return False
 
-    def contextMenuEvent(self, event):
-        menu = QMenu(self)
-        menu.setStyleSheet("background-color: white; color: black;")
-        
-        # サイズ
-        size_menu = menu.addMenu("Size")
-        for s in ["S", "M", "L"]:
-            action = QAction(f"Size {s}", self)
-            action.triggered.connect(lambda chk, sz=s: self.apply_size(sz))
-            size_menu.addAction(action)
-
-        # 最前面
-        top_act = QAction("Always on Top", self, checkable=True, checked=self.always_on_top)
-        top_act.triggered.connect(self.toggle_on_top)
-        menu.addAction(top_act)
-
-        # 【追加】自動起動
-        start_act = QAction("Start with Windows", self, checkable=True, checked=self.is_startup_enabled())
-        start_act.triggered.connect(self.toggle_startup)
-        menu.addAction(start_act)
-
-        menu.addSeparator()
-        exit_act = QAction("Exit", self)
-        exit_act.triggered.connect(QApplication.instance().quit)
-        menu.addAction(exit_act)
-        menu.exec(event.globalPos())
-
-    # --- 共通の動き ---
-    def toggle_on_top(self):
-        self.always_on_top = not self.always_on_top
-        self.update_window_flags()
-
+    # --- 基本動作 ---
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= self.tab_height + 15:
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= 40:
             self.is_moving = True
             self.offset = event.position().toPoint()
 
     def mouseMoveEvent(self, event):
-        if self.is_moving:
-            self.move(self.pos() + event.position().toPoint() - self.offset)
+        if self.is_moving: self.move(self.pos() + event.position().toPoint() - self.offset)
 
     def mouseReleaseEvent(self, event): self.is_moving = False
 
@@ -165,6 +166,20 @@ class KeyBoardVisualizer(QWidget):
     def get_key_str(self, key):
         try: return key.char.lower()
         except: return str(key).replace("Key.", "")
+
+    def update_press_style(self, k):
+        if k in self.keys_labels:
+            self.counts[k] = self.counts.get(k, 0) + 1
+            lbl, text = self.keys_labels[k]
+            lbl.setText(f"{text}\n{self.counts[k]}")
+            lbl.setStyleSheet("background-color: red; color: white; font-weight: bold; border-radius: 5px;")
+            self.save_stats()
+
+    def update_release_style(self, k):
+        if k in self.keys_labels:
+            lbl, _ = self.keys_labels[k]
+            lbl.setStyleSheet("background-color: #f0f0f0; color: black; border: 1px solid #999; border-radius: 5px;")
+
     def load_stats(self):
         if os.path.exists(SAVE_FILE):
             try:
@@ -173,17 +188,9 @@ class KeyBoardVisualizer(QWidget):
         return {}
     def save_stats(self):
         with open(SAVE_FILE, "w") as f: json.dump(self.counts, f)
-    def update_press_style(self, k):
-        if k in self.keys_labels:
-            self.counts[k] = self.counts.get(k, 0) + 1
-            lbl, text = self.keys_labels[k]; lbl.setText(f"{text}\n{self.counts[k]}")
-            lbl.setStyleSheet("background-color: red; color: white; font-weight: bold; border-radius: 5px;")
-            self.save_stats()
-    def update_release_style(self, k):
-        if k in self.keys_labels:
-            lbl, _ = self.keys_labels[k]; lbl.setStyleSheet("background-color: #eee; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px;")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = KeyBoardVisualizer()
+    ex.show()
     sys.exit(app.exec())
