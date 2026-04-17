@@ -1,52 +1,65 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QWidget, QGridLayout, QLabel
+from PyQt6.QtCore import Qt, QTimer
 from pynput import keyboard
 
-class KeyVisualizer(QWidget):
+class KeyBoardVisualizer(QWidget):
     def __init__(self):
         super().__init__()
-        # ウィンドウを最前面に固定し、枠無しの「タブ」のような外見にする
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
-        self.setGeometry(100, 100, 300, 80) # 表示場所(x,y)とサイズ(幅,高さ)
-
-        # ラベル（表示部分）の作成
-        self.label = QLabel("Waiting...", self)
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.keys_labels = {}
+        self.initUI()
         
-        # 初期の見た目（白背景）
-        self.white_style = "background-color: white; color: black; font-size: 24pt; font-weight: bold; border: 2px solid #ccc;"
-        # 押した時の見た目（赤背景）
-        self.red_style = "background-color: red; color: white; font-size: 24pt; font-weight: bold;"
-        
-        self.label.setStyleSheet(self.white_style)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.label)
-        self.setLayout(layout)
-
-        # キーボードの入力を監視する
+        # キーボードリスナー
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
 
+    def initUI(self):
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background-color: rgba(255, 255, 255, 200); border-radius: 10px;")
+        
+        layout = QGridLayout()
+        layout.setSpacing(5)
+
+        # キーボードの配置定義 (簡易版)
+        rows = [
+            ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+            ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+            ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
+        ]
+
+        for r, row in enumerate(rows):
+            for c, key in enumerate(row):
+                lbl = QLabel(key)
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl.setFixedSize(40, 40)
+                # 初期スタイル：白背景に黒文字
+                lbl.setStyleSheet("background-color: white; color: black; border: 1px solid gray; font-weight: bold;")
+                layout.addWidget(lbl, r, c)
+                self.keys_labels[key.lower()] = lbl
+
+        self.setLayout(layout)
+        self.show()
+
     def on_press(self, key):
         try:
-            # 普通の文字キー
-            k = key.char.upper()
+            k = key.char.lower()
+            if k in self.keys_labels:
+                # 押されたら赤くする
+                self.keys_labels[k].setStyleSheet("background-color: red; color: white; border: 1px solid darkred; font-weight: bold;")
         except AttributeError:
-            # Shift, Ctrlなどの特殊キー
-            k = str(key).replace("Key.", "").capitalize()
-
-        # 画面の文字を更新して背景を赤くする
-        self.label.setText(k)
-        self.label.setStyleSheet(self.red_style)
+            pass
 
     def on_release(self, key):
-        # キーを離したら白背景に戻す
-        self.label.setStyleSheet(self.white_style)
+        try:
+            k = key.char.lower()
+            if k in self.keys_labels:
+                # 離したら白に戻す
+                self.keys_labels[k].setStyleSheet("background-color: white; color: black; border: 1px solid gray; font-weight: bold;")
+        except AttributeError:
+            pass
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = KeyVisualizer()
-    window.show()
+    ex = KeyBoardVisualizer()
     sys.exit(app.exec())
