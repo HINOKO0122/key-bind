@@ -2,10 +2,6 @@ import sys
 import json
 import os
 import winreg
-
-# 真っ黒対策（念のため残しますが、不透明設定にしています）
-os.environ["QT_QUICK_BACKEND"] = "software"
-
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QObject
 from PyQt6.QtGui import QAction
@@ -26,133 +22,120 @@ class KeyBoardVisualizer(QWidget):
         self.always_on_top = True
         self.is_moving = False
         self.signals = KeySignal()
-        
-        # 信号の接続
         self.signals.pressed.connect(self.update_press_style)
         self.signals.released.connect(self.update_release_style)
 
-        # 1. まずフラグを設定（表示する前に設定するのが鉄則です）
+        # 初期設定
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
-        
-        # 2. UIの初期化
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.initUI()
         
-        # 3. リスナー開始
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-        self.listener.setDaemon(True) # アプリ終了時に一緒に消えるように
+        self.listener.daemon = True
         self.listener.start()
 
     def initUI(self):
-        # 背景を白に固定（真っ黒対策）
-        self.setStyleSheet("background-color: white; border: 2px solid #444; border-radius: 10px;")
         self.apply_size("M")
 
     def apply_size(self, size_label):
-        size_map = {"S": (500, 220), "M": (750, 320), "L": (1000, 420)}
+        size_map = {"S": (600, 300), "M": (850, 400), "L": (1100, 500)}
         w, h = size_map[size_label]
         self.setFixedSize(w, h)
-        self.update_keys() # キーを再配置
+        self.update_keys()
 
     def update_keys(self):
-        # 古いラベルを完全に消去
         for lbl, _ in self.keys_labels.values():
-            lbl.setParent(None)
             lbl.deleteLater()
         self.keys_labels = {}
 
-        # タブハンドル
-        self.tab_height = 30
-        self.handle = QLabel("::: RIGHT CLICK FOR SETTINGS / DRAG TO MOVE :::", self)
+        # 全体スタイル（透明度を調整）
+        self.setStyleSheet("background-color: rgba(30, 30, 30, 200); border: 2px solid #555; border-radius: 15px;")
+
+        self.tab_height = 35
+        self.handle = QLabel("::: DRAG TO MOVE / RIGHT CLICK SETTINGS :::", self)
         self.handle.setGeometry(10, 5, self.width()-20, self.tab_height)
         self.handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.handle.setStyleSheet("background: #333; color: white; border-radius: 5px; font-weight: bold;")
-        self.handle.show()
+        self.handle.setStyleSheet("background: rgba(255, 255, 255, 30); color: white; border: none; font-weight: bold;")
 
-        # キーボードのデータ（省略なし）
+        # [表示名, 識別ID, 横オフセット, 幅倍率, 行]
         key_map = [
+            # 行0: 数字
             ["1", "1", 0, 1, 0], ["2", "2", 1, 1, 0], ["3", "3", 2, 1, 0], ["4", "4", 3, 1, 0], ["5", "5", 4, 1, 0], 
             ["6", "6", 5, 1, 0], ["7", "7", 6, 1, 0], ["8", "8", 7, 1, 0], ["9", "9", 8, 1, 0], ["0", "0", 9, 1, 0], ["BS", "backspace", 10, 1.5, 0],
-            ["Q", "q", 0.2, 1, 1], ["W", "w", 1.2, 1, 1], ["E", "e", 2.2, 1, 1], ["R", "r", 3.2, 1, 1], ["T", "t", 4.2, 1, 1], 
-            ["Y", "y", 5.2, 1, 1], ["U", "u", 6.2, 1, 1], ["I", "i", 7.2, 1, 1], ["O", "o", 8.2, 1, 1], ["P", "p", 9.2, 1, 1],
-            ["A", "a", 0.5, 1, 2], ["S", "s", 1.5, 1, 2], ["D", "d", 2.5, 1, 2], ["F", "f", 3.5, 1, 2], ["G", "g", 4.5, 1, 2], 
-            ["H", "h", 5.5, 1, 2], ["J", "j", 6.5, 1, 2], ["K", "k", 7.5, 1, 2], ["L", "l", 8.5, 1, 2],
-            ["Z", "z", 0.8, 1, 3], ["X", "x", 1.8, 1, 3], ["C", "c", 2.8, 1, 3], ["V", "v", 3.8, 1, 3], ["B", "b", 4.8, 1, 3], 
-            ["N", "n", 5.8, 1, 3], ["M", "m", 6.8, 1, 3],
-            ["SPACE", "space", 3, 4, 4]
+            # 行1: Tab + 文字
+            ["Tab", "tab", 0, 1.3, 1], ["Q", "q", 1.3, 1, 1], ["W", "w", 2.3, 1, 1], ["E", "e", 3.3, 1, 1], ["R", "r", 4.3, 1, 1], ["T", "t", 5.3, 1, 1], 
+            ["Y", "y", 6.3, 1, 1], ["U", "u", 7.3, 1, 1], ["I", "i", 8.3, 1, 1], ["O", "o", 9.3, 1, 1], ["P", "p", 10.3, 1, 1],
+            # 行2: Ctrl + 文字 + Enter
+            ["Ctrl", "ctrl_l", 0, 1.5, 2], ["A", "a", 1.5, 1, 2], ["S", "s", 2.5, 1, 2], ["D", "d", 3.5, 1, 2], ["F", "f", 4.5, 1, 2], ["G", "g", 5.5, 1, 2], 
+            ["H", "h", 6.5, 1, 2], ["J", "j", 7.5, 1, 2], ["K", "k", 8.5, 1, 2], ["L", "l", 9.5, 1, 2], ["Enter", "enter", 10.5, 1.2, 2],
+            # 行3: Shift + 文字 + Alt
+            ["Shift", "shift", 0, 1.8, 3], ["Z", "z", 1.8, 1, 3], ["X", "x", 2.8, 1, 3], ["C", "c", 3.8, 1, 3], ["V", "v", 4.8, 1, 3], ["B", "b", 5.8, 1, 3], 
+            ["N", "n", 6.8, 1, 3], ["M", "m", 7.8, 1, 3], ["Alt", "alt_l", 8.8, 1.2, 3],
+            # 行4: スペース
+            ["SPACE", "space", 3, 5, 4]
         ]
 
-        padding_t, margin = 45, 15
-        base_w = (self.width() - margin*2) / 12
-        base_h = (self.height() - padding_t - margin) / 5
+        p_t, m = 50, 20
+        b_w = (self.width() - m*2) / 12
+        b_h = (self.height() - p_t - m) / 5
 
         for text, code, x_off, w_mul, row in key_map:
             count = self.counts.get(code, 0)
             lbl = QLabel(f"{text}\n{count}", self)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setGeometry(int(x_off * base_w) + margin, int(row * base_h) + padding_t, int(base_w * w_mul) - 4, int(base_h) - 4)
-            lbl.setStyleSheet("background-color: #f0f0f0; color: black; border: 1px solid #999; border-radius: 5px;")
-            lbl.show() # 明示的に表示
+            lbl.setGeometry(int(x_off * b_w) + m, int(row * b_h) + p_t, int(b_w * w_mul) - 6, int(b_h) - 6)
+            lbl.setStyleSheet("background-color: rgba(255, 255, 255, 200); color: black; border: 1px solid #777; border-radius: 6px; font-weight: bold; font-size: 9pt;")
+            lbl.show()
             self.keys_labels[code] = (lbl, text)
 
-    # --- 右クリックメニュー ---
     def contextMenuEvent(self, event):
         menu = QMenu(self)
+        # メニューの文字が見えるように背景を指定
+        menu.setStyleSheet("QMenu { background-color: white; border: 1px solid gray; } QMenu::item:selected { background-color: #0078d7; color: white; }")
         
-        # サイズ変更
-        size_m = menu.addMenu("サイズ変更")
+        size_m = menu.addMenu("Resize")
         for s in ["S", "M", "L"]:
-            a = QAction(f"サイズ {s}", self)
+            a = QAction(f"Size {s}", self)
             a.triggered.connect(lambda chk, sz=s: self.apply_size(sz))
             size_m.addAction(a)
 
-        # 最前面設定
-        top_a = QAction("最前面に表示", self, checkable=True, checked=self.always_on_top)
+        top_a = QAction("Always On Top", self, checkable=True, checked=self.always_on_top)
         top_a.triggered.connect(self.toggle_on_top)
         menu.addAction(top_a)
 
-        # 自動起動
-        start_a = QAction("Windows起動時に開始", self, checkable=True, checked=self.is_startup_enabled())
+        start_a = QAction("Launch on Startup", self, checkable=True, checked=self.is_startup_enabled())
         start_a.triggered.connect(self.toggle_startup)
         menu.addAction(start_a)
 
         menu.addSeparator()
-        exit_a = QAction("終了", self)
+        exit_a = QAction("Exit App", self)
         exit_a.triggered.connect(QApplication.instance().quit)
         menu.addAction(exit_a)
-        
         menu.exec(event.globalPos())
 
     def toggle_on_top(self):
         self.always_on_top = not self.always_on_top
-        if self.always_on_top:
-            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        else:
-            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
-        self.show() # フラグ変更後にこれがないと消える場合がある
+        self.setWindowFlags(self.windowFlags() ^ Qt.WindowType.WindowStaysOnTopHint)
+        self.show()
 
-    # --- 自動起動 (Registry) ---
     def toggle_startup(self, checked):
         path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         try:
-            reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE)
-            if checked:
-                winreg.SetValueEx(reg_key, APP_NAME, 0, winreg.REG_SZ, os.path.abspath(sys.argv[0]))
-            else:
-                try: winreg.DeleteValue(reg_key, APP_NAME)
-                except: pass
-            winreg.CloseKey(reg_key)
+            reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE)
+            if checked: winreg.SetValueEx(reg, APP_NAME, 0, winreg.REG_SZ, os.path.abspath(sys.argv[0]))
+            else: winreg.DeleteValue(reg, APP_NAME)
+            winreg.CloseKey(reg)
         except: pass
 
     def is_startup_enabled(self):
         try:
-            reg_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
-            winreg.QueryValueEx(reg_key, APP_NAME)
+            reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            winreg.QueryValueEx(reg, APP_NAME)
             return True
         except: return False
 
-    # --- 基本動作 ---
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= 40:
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= self.tab_height + 15:
             self.is_moving = True
             self.offset = event.position().toPoint()
 
@@ -163,22 +146,29 @@ class KeyBoardVisualizer(QWidget):
 
     def on_press(self, key): self.signals.pressed.emit(self.get_key_str(key))
     def on_release(self, key): self.signals.released.emit(self.get_key_str(key))
+
     def get_key_str(self, key):
-        try: return key.char.lower()
-        except: return str(key).replace("Key.", "")
+        try:
+            return key.char.lower()
+        except AttributeError:
+            k = str(key).replace("Key.", "")
+            if "shift" in k: return "shift"
+            if "ctrl" in k: return "ctrl_l"
+            if "alt" in k: return "alt_l"
+            return k
 
     def update_press_style(self, k):
         if k in self.keys_labels:
             self.counts[k] = self.counts.get(k, 0) + 1
             lbl, text = self.keys_labels[k]
             lbl.setText(f"{text}\n{self.counts[k]}")
-            lbl.setStyleSheet("background-color: red; color: white; font-weight: bold; border-radius: 5px;")
+            lbl.setStyleSheet("background-color: #ff3333; color: white; border: 1px solid white; border-radius: 6px; font-weight: bold;")
             self.save_stats()
 
     def update_release_style(self, k):
         if k in self.keys_labels:
             lbl, _ = self.keys_labels[k]
-            lbl.setStyleSheet("background-color: #f0f0f0; color: black; border: 1px solid #999; border-radius: 5px;")
+            lbl.setStyleSheet("background-color: rgba(255, 255, 255, 200); color: black; border: 1px solid #777; border-radius: 6px; font-weight: bold;")
 
     def load_stats(self):
         if os.path.exists(SAVE_FILE):
