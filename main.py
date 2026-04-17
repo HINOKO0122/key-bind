@@ -2,8 +2,7 @@ import sys
 import json
 import os
 
-# 【重要】真っ黒画面を防ぐための魔法の1行
-# ソフトウェア描画を強制し、GPUとの相性問題を回避します
+# 真っ黒画面対策
 os.environ["QT_QUICK_BACKEND"] = "software"
 os.environ["QT_API"] = "pyqt6"
 
@@ -24,6 +23,7 @@ class KeyBoardVisualizer(QWidget):
         self.keys_labels = {}
         self.counts = self.load_stats()
         self.always_on_top = True
+        self.is_moving = False  # 移動中かどうかのフラグ
         self.signals = KeySignal()
         self.signals.pressed.connect(self.update_press_style)
         self.signals.released.connect(self.update_release_style)
@@ -34,7 +34,6 @@ class KeyBoardVisualizer(QWidget):
 
     def initUI(self):
         self.update_window_flags()
-        # 背景の透過を一度オフにしても良いですが、まずはこれで試しましょう
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.apply_size("M")
 
@@ -56,8 +55,10 @@ class KeyBoardVisualizer(QWidget):
             lbl.deleteLater()
         self.keys_labels = {}
 
-        self.tab_handle = QLabel("::: RIGHT CLICK FOR SETTINGS / DRAG TO MOVE :::", self)
-        self.tab_handle.setGeometry(20, 5, self.width()-40, 25)
+        # タブ（移動ハンドル）
+        self.tab_height = 30
+        self.tab_handle = QLabel("::: DRAG THIS BAR TO MOVE / RIGHT CLICK FOR SETTINGS :::", self)
+        self.tab_handle.setGeometry(10, 5, self.width()-20, self.tab_height)
         self.tab_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.tab_handle.setStyleSheet("background: #333; color: white; border-radius: 5px; font-size: 7pt; font-weight: bold;")
 
@@ -73,7 +74,7 @@ class KeyBoardVisualizer(QWidget):
             ["SPACE", "space", 3, 4, 4]
         ]
 
-        padding_t, margin = 40, 15
+        padding_t, margin = 45, 15
         base_w = (self.width() - margin*2) / 12
         base_h = (self.height() - padding_t - margin) / 5
 
@@ -87,6 +88,24 @@ class KeyBoardVisualizer(QWidget):
 
         self.setStyleSheet("background-color: rgba(240, 240, 240, 235); border: 2px solid #444; border-radius: 15px;")
 
+    # --- 移動操作の修正 ---
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # クリックした位置が上部のタブハンドル内（y座標が40以下）か判定
+            if event.position().y() <= self.tab_height + 10:
+                self.is_moving = True
+                self.offset = event.position().toPoint()
+            else:
+                self.is_moving = False
+
+    def mouseMoveEvent(self, event):
+        if self.is_moving and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(self.pos() + event.position().toPoint() - self.offset)
+
+    def mouseReleaseEvent(self, event):
+        self.is_moving = False
+
+    # (以下、前回と同様のメソッド)
     def update_press_style(self, k):
         if k in self.keys_labels:
             self.counts[k] = self.counts.get(k, 0) + 1
@@ -128,14 +147,6 @@ class KeyBoardVisualizer(QWidget):
     def toggle_on_top(self):
         self.always_on_top = not self.always_on_top
         self.update_window_flags()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.offset = event.position().toPoint()
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(self.pos() + event.position().toPoint() - self.offset)
 
     def load_stats(self):
         if os.path.exists(SAVE_FILE):
