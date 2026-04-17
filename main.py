@@ -1,12 +1,18 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel
-from PyQt6.QtCore import Qt, QPoint, QSize
+import json
+import os
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
+from PyQt6.QtCore import Qt, QPoint
 from pynput import keyboard
+
+# データ保存ファイルのパス
+SAVE_FILE = "stats.json"
 
 class KeyBoardVisualizer(QWidget):
     def __init__(self):
         super().__init__()
         self.keys_labels = {}
+        self.counts = self.load_stats() # 生涯カウントの読み込み
         self.offset = QPoint()
         self.initUI()
         
@@ -14,20 +20,36 @@ class KeyBoardVisualizer(QWidget):
         self.listener.start()
 
     def initUI(self):
+        # 枠なし、最前面、マウス追従リサイズを有効化
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        # 枠線をつけて、右下でサイズ変更できるようにする
-        self.setStyleSheet("background-color: rgba(255, 255, 255, 220); border-radius: 8px; border: 2px solid #555;")
+        self.setMouseTracking(True)
         
-        self.setup_keys()
-        self.setMinimumSize(400, 200)
-        self.resize(600, 260) # 初期サイズ
+        self.setMinimumSize(500, 300)
+        self.resize(800, 350)
+        self.setup_layout()
 
-    def setup_keys(self):
-        # 古いラベルを消去
+    def setup_layout(self):
+        self.setStyleSheet("""
+            QWidget {
+                background-color: rgba(240, 240, 240, 235);
+                border: 2px solid #444;
+                border-radius: 15px;
+            }
+        """)
+        self.update_keys()
+
+    def update_keys(self):
+        # 既存のラベルを削除
         for lbl in self.keys_labels.values():
             lbl.deleteLater()
         self.keys_labels = {}
+
+        # タブ（移動用ハンドル）の作成
+        self.tab_handle = QLabel("::: DRAG TO MOVE / RESIZE AT EDGES :::", self)
+        self.tab_handle.setGeometry(20, 5, self.width()-40, 25)
+        self.tab_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tab_handle.setStyleSheet("background: #444; color: white; border-radius: 5px; font-size: 8pt; font-weight: bold;")
 
         # キー配置データ
         key_map = [
@@ -42,48 +64,64 @@ class KeyBoardVisualizer(QWidget):
             ["SPACE", "space", 3, 4, 4]
         ]
 
-        # ウィンドウサイズに合わせてキーの大きさを計算
-        padding = 10
-        base_w = (self.width() - padding*2) / 12
-        base_h = (self.height() - padding*2) / 5
+        padding_t = 40
+        margin = 15
+        base_w = (self.width() - margin*2) / 12
+        base_h = (self.height() - padding_t - margin) / 5
 
         for text, code, x_off, w_mul, row in key_map:
-            lbl = QLabel(text, self)
+            count = self.counts.get(code, 0)
+            lbl = QLabel(f"{text}\n{count}", self)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
             w = int(base_w * w_mul)
-            x = int(x_off * base_w) + padding
-            y = int(row * base_h) + padding
-            lbl.setGeometry(x, y, w - 2, int(base_h) - 2)
-            lbl.setStyleSheet("background-color: white; color: black; border: 1px solid gray; font-weight: bold;")
-            self.keys_labels[code] = lbl
-        self.show()
+            x = int(x_off * base_w) + margin
+            y = int(row * base_h) + padding_t
+            
+            lbl.setGeometry(x, y, w - 4, int(base_h) - 4)
+            lbl.setStyleSheet("background-color: white; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px;")
+            self.keys_labels[code] = (lbl, text)
 
-    # サイズ変更時にキーを再配置
-    def resizeEvent(self, event):
-        self.setup_keys()
-
-    # マウス操作：移動とリサイズ
+    # --- 操作性（移動・リサイズ） ---
     def mousePressEvent(self, event):
         self.offset = event.position().toPoint()
-        # 右下 30px 以内ならリサイズモード
-        self.is_resizing = (event.position().x() > self.width() - 30 and event.position().y() > self.height() - 30)
+        # 右下の端っこ（20px）を掴んだらリサイズ
+        self.is_resizing = (event.position().x() > self.width() - 25 and event.position().y() > self.height() - 25)
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.MouseButton.LeftButton:
-            if getattr(self, 'is_resizing', False):
-                self.resize(event.position().x(), event.position().y())
+            if self.is_resizing:
+                new_size = event.position().toPoint()
+                self.resize(max(500, new_size.x()), max(300, new_size.y()))
+                self.update_keys()
             else:
                 self.move(self.pos() + event.position().toPoint() - self.offset)
+
+    # --- カウントと保存 ---
+    def load_stats(self):
+        if os.path.exists(SAVE_FILE):
+            with open(SAVE_FILE, "r") as f:
+                return json.load(f)
+        return {}
+
+    def save_stats(self):
+        with open(SAVE_FILE, "w") as f:
+            json.dump(self.counts, f)
 
     def on_press(self, key):
         k = self.get_key_str(key)
         if k in self.keys_labels:
-            self.keys_labels[k].setStyleSheet("background-color: red; color: white; border: 1px solid darkred; font-weight: bold;")
+            self.counts[k] = self.counts.get(k, 0) + 1
+            lbl, text = self.keys_labels[k]
+            lbl.setText(f"{text}\n{self.counts[k]}")
+            lbl.setStyleSheet("background-color: #ff4444; color: white; border: 1px solid darkred; font-weight: bold; border-radius: 5px;")
+            self.save_stats() # 押すたびに保存
 
     def on_release(self, key):
         k = self.get_key_str(key)
         if k in self.keys_labels:
-            self.keys_labels[k].setStyleSheet("background-color: white; color: black; border: 1px solid gray; font-weight: bold;")
+            lbl, text = self.keys_labels[k]
+            lbl.setStyleSheet("background-color: white; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px;")
 
     def get_key_str(self, key):
         try: return key.char.lower()
@@ -92,4 +130,5 @@ class KeyBoardVisualizer(QWidget):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = KeyBoardVisualizer()
+    ex.show()
     sys.exit(app.exec())
