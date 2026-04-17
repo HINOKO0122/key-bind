@@ -1,8 +1,9 @@
 import sys
 import json
 import os
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtGui import QAction
 from pynput import keyboard
 
 # データ保存ファイルのパス
@@ -12,46 +13,53 @@ class KeyBoardVisualizer(QWidget):
     def __init__(self):
         super().__init__()
         self.keys_labels = {}
-        self.counts = self.load_stats() # 生涯カウントの読み込み
+        self.counts = self.load_stats()
         self.offset = QPoint()
+        self.always_on_top = True # デフォルトは最前面
+        
         self.initUI()
         
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
 
     def initUI(self):
-        # 枠なし、最前面、マウス追従リサイズを有効化
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+        self.update_window_flags()
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMouseTracking(True)
         
-        self.setMinimumSize(500, 300)
-        self.resize(800, 350)
-        self.setup_layout()
+        # 初期サイズをMに設定
+        self.apply_size("M")
 
-    def setup_layout(self):
-        self.setStyleSheet("""
-            QWidget {
-                background-color: rgba(240, 240, 240, 235);
-                border: 2px solid #444;
-                border-radius: 15px;
-            }
-        """)
+    def update_window_flags(self):
+        # 最前面設定を反映させるためにフラグを更新
+        flags = Qt.WindowType.FramelessWindowHint
+        if self.always_on_top:
+            flags |= Qt.WindowType.WindowStaysOnTopHint
+        
+        self.setWindowFlags(flags)
+        self.show() # フラグ変更後は再表示が必要
+
+    def apply_size(self, size_label):
+        # S, M, L の具体的なサイズ定義
+        size_map = {
+            "S": (500, 220),
+            "M": (750, 320),
+            "L": (1000, 420)
+        }
+        w, h = size_map[size_label]
+        self.setFixedSize(w, h)
         self.update_keys()
 
     def update_keys(self):
-        # 既存のラベルを削除
         for lbl in self.keys_labels.values():
             lbl.deleteLater()
         self.keys_labels = {}
 
-        # タブ（移動用ハンドル）の作成
-        self.tab_handle = QLabel("::: DRAG TO MOVE / RESIZE AT EDGES :::", self)
+        # タブ（移動ハンドル兼、説明ラベル）
+        self.tab_handle = QLabel("::: RIGHT CLICK FOR SETTINGS / DRAG TO MOVE :::", self)
         self.tab_handle.setGeometry(20, 5, self.width()-40, 25)
         self.tab_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tab_handle.setStyleSheet("background: #444; color: white; border-radius: 5px; font-size: 8pt; font-weight: bold;")
+        self.tab_handle.setStyleSheet("background: #333; color: white; border-radius: 5px; font-size: 7pt; font-weight: bold;")
 
-        # キー配置データ
         key_map = [
             ["1", "1", 0, 1, 0], ["2", "2", 1, 1, 0], ["3", "3", 2, 1, 0], ["4", "4", 3, 1, 0], ["5", "5", 4, 1, 0], 
             ["6", "6", 5, 1, 0], ["7", "7", 6, 1, 0], ["8", "8", 7, 1, 0], ["9", "9", 8, 1, 0], ["0", "0", 9, 1, 0], ["BS", "backspace", 10, 1.5, 0],
@@ -64,8 +72,7 @@ class KeyBoardVisualizer(QWidget):
             ["SPACE", "space", 3, 4, 4]
         ]
 
-        padding_t = 40
-        margin = 15
+        padding_t, margin = 40, 15
         base_w = (self.width() - margin*2) / 12
         base_h = (self.height() - padding_t - margin) / 5
 
@@ -73,40 +80,62 @@ class KeyBoardVisualizer(QWidget):
             count = self.counts.get(code, 0)
             lbl = QLabel(f"{text}\n{count}", self)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            
-            w = int(base_w * w_mul)
-            x = int(x_off * base_w) + margin
-            y = int(row * base_h) + padding_t
-            
-            lbl.setGeometry(x, y, w - 4, int(base_h) - 4)
-            lbl.setStyleSheet("background-color: white; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px;")
+            lbl.setGeometry(int(x_off * base_w) + margin, int(row * base_h) + padding_t, int(base_w * w_mul) - 4, int(base_h) - 4)
+            lbl.setStyleSheet("background-color: white; color: black; border: 1px solid #999; font-weight: bold; border-radius: 5px; font-size: 8pt;")
             self.keys_labels[code] = (lbl, text)
 
-    # --- 操作性（移動・リサイズ） ---
+        self.setStyleSheet("background-color: rgba(240, 240, 240, 235); border: 2px solid #444; border-radius: 15px;")
+
+    # --- 設定メニュー（右クリック） ---
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setStyleSheet("background-color: white; color: black; border: 1px solid gray;")
+
+        # サイズ変更メニュー
+        size_menu = menu.addMenu("Size")
+        for s in ["S", "M", "L"]:
+            action = QAction(f"Size {s}", self)
+            action.triggered.connect(lambda checked, sz=s: self.apply_size(sz))
+            size_menu.addAction(action)
+
+        # 最前面設定
+        top_action = QAction("Always on Top", self)
+        top_action.setCheckable(True)
+        top_action.setChecked(self.always_on_top)
+        top_action.triggered.connect(self.toggle_on_top)
+        menu.addAction(top_action)
+
+        menu.addSeparator()
+        
+        # 終了
+        exit_action = QAction("Exit App", self)
+        exit_action.triggered.connect(QApplication.instance().quit)
+        menu.addAction(exit_action)
+
+        menu.exec(event.globalPos())
+
+    def toggle_on_top(self):
+        self.always_on_top = not self.always_on_top
+        self.update_window_flags()
+
+    # --- 基本操作 ---
     def mousePressEvent(self, event):
-        self.offset = event.position().toPoint()
-        # 右下の端っこ（20px）を掴んだらリサイズ
-        self.is_resizing = (event.position().x() > self.width() - 25 and event.position().y() > self.height() - 25)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.offset = event.position().toPoint()
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.MouseButton.LeftButton:
-            if self.is_resizing:
-                new_size = event.position().toPoint()
-                self.resize(max(500, new_size.x()), max(300, new_size.y()))
-                self.update_keys()
-            else:
-                self.move(self.pos() + event.position().toPoint() - self.offset)
+            self.move(self.pos() + event.position().toPoint() - self.offset)
 
-    # --- カウントと保存 ---
     def load_stats(self):
         if os.path.exists(SAVE_FILE):
-            with open(SAVE_FILE, "r") as f:
-                return json.load(f)
+            try:
+                with open(SAVE_FILE, "r") as f: return json.load(f)
+            except: return {}
         return {}
 
     def save_stats(self):
-        with open(SAVE_FILE, "w") as f:
-            json.dump(self.counts, f)
+        with open(SAVE_FILE, "w") as f: json.dump(self.counts, f)
 
     def on_press(self, key):
         k = self.get_key_str(key)
@@ -115,7 +144,7 @@ class KeyBoardVisualizer(QWidget):
             lbl, text = self.keys_labels[k]
             lbl.setText(f"{text}\n{self.counts[k]}")
             lbl.setStyleSheet("background-color: #ff4444; color: white; border: 1px solid darkred; font-weight: bold; border-radius: 5px;")
-            self.save_stats() # 押すたびに保存
+            self.save_stats()
 
     def on_release(self, key):
         k = self.get_key_str(key)
@@ -130,5 +159,4 @@ class KeyBoardVisualizer(QWidget):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = KeyBoardVisualizer()
-    ex.show()
     sys.exit(app.exec())
